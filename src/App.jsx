@@ -1,61 +1,84 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useMemo, useRef } from 'react'
 import { motion } from 'framer-motion'
 import gsap from 'gsap'
 import { ScrollTrigger } from 'gsap/ScrollTrigger'
 import './index.css'
 
-// Register GSAP plugin
-if (typeof window !== 'undefined' && gsap && !gsap.core.globals().ScrollTrigger) {
-  gsap.registerPlugin(ScrollTrigger)
+// Register GSAP plugin safely in browser
+if (typeof window !== 'undefined') {
+  if (!gsap.core.globals().ScrollTrigger) {
+    gsap.registerPlugin(ScrollTrigger)
+  }
 }
 
-const glass = 'backdrop-blur-2xl bg-white/10 dark:bg-white/5 border border-white/10 shadow-[0_8px_40px_rgba(0,0,0,0.25)] rounded-2xl'
-const accent = 'from-cyan-400/30 via-fuchsia-400/20 to-teal-400/30'
+const glass = 'backdrop-blur-2xl bg-white/10 border border-white/10 shadow-[0_8px_40px_rgba(0,0,0,0.25)] rounded-2xl'
 
 const Pane = ({ className = '', children }) => (
   <div className={`${glass} ${className}`}>{children}</div>
 )
 
 function useParallax(ref, opts = {}) {
+  const options = useMemo(() => ({ y: 80, start: 'top bottom', end: 'bottom top', scrub: true, ...opts }), [opts])
+
   useEffect(() => {
     const el = ref.current
-    if (!el) return
-    const { y = 80, start = 'top bottom', end = 'bottom top', scrub = true } = opts
+    if (!el || typeof window === 'undefined' || !gsap || !ScrollTrigger) return
+
+    // Respect reduced motion
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)')
+    if (reduce.matches) return
 
     const ctx = gsap.context(() => {
       gsap.fromTo(
         el,
-        { y: typeof y === 'number' ? y : y[0], opacity: 0.6 },
+        { y: typeof options.y === 'number' ? options.y : options.y[0], opacity: 0.6, willChange: 'transform, opacity' },
         {
-          y: typeof y === 'number' ? 0 : y[1],
+          y: typeof options.y === 'number' ? 0 : options.y[1],
           opacity: 1,
           ease: 'power2.out',
           scrollTrigger: {
             trigger: el,
-            start,
-            end,
-            scrub,
+            start: options.start,
+            end: options.end,
+            scrub: options.scrub,
           },
         }
       )
-    })
+    }, el)
 
-    return () => ctx.revert()
-  }, [ref, opts])
+    // Refresh triggers on resize/orientation change for stability
+    const onResize = () => {
+      try { ScrollTrigger.refresh() } catch {}
+    }
+    window.addEventListener('resize', onResize)
+    window.addEventListener('orientationchange', onResize)
+
+    return () => {
+      window.removeEventListener('resize', onResize)
+      window.removeEventListener('orientationchange', onResize)
+      ctx.revert()
+    }
+  }, [ref, options])
 }
 
 const GradientNoise = () => (
   <div className="pointer-events-none fixed inset-0 -z-10">
     <div className="absolute inset-0 bg-gradient-to-b from-black via-black/95 to-black" />
     <div className={`absolute inset-0 bg-[radial-gradient(1200px_600px_at_20%_0%,rgba(0,255,255,0.06),transparent_60%),radial-gradient(800px_400px_at_80%_20%,rgba(168,85,247,0.07),transparent_60%),radial-gradient(1000px_500px_at_50%_120%,rgba(45,212,191,0.06),transparent_60%)]`} />
-    <div className="absolute inset-0 opacity-[0.08] mix-blend-soft-light" style={{backgroundImage: 'url("data:image/svg+xml;utf8,\
+    <div
+      className="absolute inset-0 opacity-[0.08] mix-blend-soft-light"
+      style={{
+        backgroundImage:
+          'url("data:image/svg+xml;utf8,\
       <svg xmlns=\'http://www.w3.org/2000/svg\' width=\'1200\' height=\'1200\'>\
         <filter id=\'n\'>\
           <feTurbulence type=\'fractalNoise\' baseFrequency=\'0.65\' numOctaves=\'4\' stitchTiles=\'stitch\'/>\
           <feColorMatrix type=\'saturate\' values=\'0\'/>\
         </filter>\
         <rect width=\'100%\' height=\'100%\' filter=\'url(%23n)\' opacity=\'0.4\'/>\
-      </svg>\n")'}} />
+      </svg>\n")',
+      }}
+    />
   </div>
 )
 
@@ -87,25 +110,55 @@ function App() {
   const closingRef = useRef(null)
 
   useEffect(() => {
-    if (!heroRef.current) return
+    if (!heroRef.current || typeof window === 'undefined' || !gsap || !ScrollTrigger) return
+
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)')
+    if (reduce.matches) return
 
     const tl = gsap.timeline({ defaults: { ease: 'power2.out' } })
-    tl.from(heroRef.current.querySelectorAll('.hero-line'), { y: 20, opacity: 0, stagger: 0.12, duration: 0.9 })
-      .from(heroRef.current.querySelector('.hero-cta'), { y: 20, opacity: 0, duration: 0.8 }, '-=0.4')
+    tl.from(heroRef.current.querySelectorAll('.hero-line'), {
+      y: 20,
+      opacity: 0,
+      stagger: 0.12,
+      duration: 0.9,
+    }).from(
+      heroRef.current.querySelector('.hero-cta'),
+      { y: 20, opacity: 0, duration: 0.8 },
+      '-=0.4'
+    )
 
-    // Parallax hero layers
     const ctx = gsap.context(() => {
-      gsap.to(heroShapesRef.current, {
-        yPercent: 12,
-        ease: 'none',
-        scrollTrigger: { trigger: heroRef.current, start: 'top top', end: 'bottom top', scrub: true },
-      })
-      gsap.to(heroRef.current.querySelector('.hero-title'), {
-        yPercent: -6,
-        ease: 'none',
-        scrollTrigger: { trigger: heroRef.current, start: 'top top', end: 'bottom top', scrub: true },
-      })
-    })
+      if (heroShapesRef.current) {
+        gsap.to(heroShapesRef.current, {
+          yPercent: 12,
+          ease: 'none',
+          scrollTrigger: {
+            trigger: heroRef.current,
+            start: 'top top',
+            end: 'bottom top',
+            scrub: true,
+          },
+        })
+      }
+      const title = heroRef.current.querySelector('.hero-title')
+      if (title) {
+        gsap.to(title, {
+          yPercent: -6,
+          ease: 'none',
+          scrollTrigger: {
+            trigger: heroRef.current,
+            start: 'top top',
+            end: 'bottom top',
+            scrub: true,
+          },
+        })
+      }
+    }, heroRef)
+
+    // Ensure layout changes are accounted for
+    setTimeout(() => {
+      try { ScrollTrigger.refresh() } catch {}
+    }, 50)
 
     return () => ctx.revert()
   }, [])
@@ -180,13 +233,17 @@ function App() {
             <div className="flex flex-col md:flex-row items-center gap-8 md:gap-12">
               <div className="grid grid-cols-5 gap-4 w-full md:w-auto">
                 {modelIcons.map((m) => (
-                  <div key={m.name} className={`${glass} aspect-square w-16 md:w-20 flex items-center justify-center bg-white/5 hover:bg-white/10 transition-colors`}
+                  <motion.div
+                    key={m.name}
+                    whileHover={{ scale: 1.05, rotate: 0.5 }}
+                    transition={{ type: 'spring', stiffness: 400, damping: 24 }}
+                    className={`${glass} aspect-square w-16 md:w-20 flex items-center justify-center bg-white/5`}
                     style={{
                       backgroundImage: 'linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))',
                     }}
                   >
                     <span className={`text-[11px] md:text-sm bg-clip-text text-transparent bg-gradient-to-br ${m.color}`}>{m.name}</span>
-                  </div>
+                  </motion.div>
                 ))}
               </div>
               <div className="flex-1 text-center md:text-left">
@@ -222,7 +279,8 @@ function App() {
           <Pane className="p-10 md:p-14">
             <div className="relative grid md:grid-cols-2 gap-8 items-center">
               <div className="relative order-2 md:order-1">
-                <div className={`${glass} h-48 md:h-64 rounded-3xl border-dashed border-white/20 flex items-center justify-center`}
+                <div
+                  className={`${glass} h-48 md:h-64 rounded-3xl border-dashed border-white/20 flex items-center justify-center`}
                   style={{ background: 'rgba(255,255,255,0.06)', backdropFilter: 'blur(20px)' }}
                 >
                   <div className="relative">
@@ -244,13 +302,17 @@ function App() {
       <Section id="models">
         <div ref={modelsRef}>
           <div className={`${glass} p-6 md:p-8 overflow-hidden`}>
-            <div className="flex gap-4 md:gap-6 overflow-x-auto py-2">
+            <div className="flex gap-4 md:gap-6 overflow-x-auto py-2 hide-scrollbar">
               {modelIcons.map((m) => (
-                <div key={m.name} className={`${glass} shrink-0 w-28 md:w-32 h-16 md:h-20 flex items-center justify-center bg-white/5 hover:scale-[1.02] transition-transform`}
+                <motion.div
+                  key={m.name}
+                  whileHover={{ scale: 1.04 }}
+                  transition={{ type: 'spring', stiffness: 380, damping: 22 }}
+                  className={`${glass} shrink-0 w-28 md:w-32 h-16 md:h-20 flex items-center justify-center bg-white/5`}
                   style={{ backgroundImage: 'linear-gradient(120deg, rgba(0,255,255,0.08), rgba(168,85,247,0.08))' }}
                 >
                   <span className={`text-sm bg-clip-text text-transparent bg-gradient-to-br ${m.color}`}>{m.name}</span>
-                </div>
+                </motion.div>
               ))}
             </div>
           </div>
@@ -286,7 +348,7 @@ function App() {
         <div ref={teamRef}>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
             {Array.from({ length: 4 }).map((_, i) => (
-              <Pane key={i} className="p-4 md:p-6 text-center bg-white/8 hover:bg-white/10 transition-colors">
+              <Pane key={i} className="p-4 md:p-6 text-center bg-white/8">
                 <div className="mx-auto h-14 w-14 md:h-16 md:w-16 rounded-full bg-gradient-to-br from-cyan-400/30 to-fuchsia-400/30" />
                 <div className="mt-3 text-sm md:text-base">Teammate {i + 1}</div>
                 <div className="text-xs text-white/50">Design/Build</div>
